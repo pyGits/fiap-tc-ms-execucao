@@ -1,0 +1,226 @@
+{
+  "info": {
+    "name": "FIAP TC Fase 4 - Execução Service (fila da oficina)",
+    "description": "Microsserviço participante da Saga.\n\nExecuções NÃO são criadas por HTTP: elas nascem do comando ENFILEIRAR_EXECUCAO que o orquestrador publica na fila `saga.execucao.comandos`. As rotas REST aqui consultam a fila e registram o trabalho do mecânico — que acontece DEPOIS da Saga terminar, porque um reparo leva horas ou dias e nenhuma transação distribuída pode ficar esperando por isso.\n\nA finalização publica o evento EXECUCAO_FINALIZADA; o OS Service reage a ele sem que este serviço o conheça (trecho coreografado do fluxo).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3002", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "ordemServicoId", "value": "", "type": "string" },
+    { "key": "execucaoId", "value": "", "type": "string" },
+    { "key": "mecanico", "value": "Joao da Silva", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Saúde e documentação",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('identifica o serviço', () => pm.expect(pm.response.json().servico).to.eql('fiap-tc-ms-execucao'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api-docs.json",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api-docs.json", "host": ["{{baseUrl}}"], "path": ["api-docs.json"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fila da oficina",
+      "item": [
+        {
+          "name": "GET /execucoes/fila",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/execucoes/fila", "host": ["{{baseUrl}}"], "path": ["execucoes", "fila"] },
+            "description": "Tela de trabalho do mecânico: o que está na fila, na ordem de entrada, e o tempo total estimado."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responde 200', () => pm.response.to.have.status(200));",
+                  "const corpo = pm.response.json();",
+                  "console.log('na fila:', corpo.total, '| estimativa (min):', corpo.tempoEstimadoTotalMinutos);",
+                  "if (corpo.execucoes && corpo.execucoes.length) {",
+                  "  pm.collectionVariables.set('execucaoId', corpo.execucoes[0].id);",
+                  "  pm.collectionVariables.set('ordemServicoId', corpo.execucoes[0].ordemServicoId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /execucoes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/execucoes?status=NA_FILA",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "NA_FILA",
+                  "description": "NA_FILA, EM_ANDAMENTO, FINALIZADA, CANCELADA"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /execucoes/ordem-servico/{ordemServicoId}",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/execucoes/ordem-servico/{{ordemServicoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes", "ordem-servico", "{{ordemServicoId}}"]
+            }
+          }
+        },
+        {
+          "name": "GET /execucoes/{id}",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/execucoes/{{execucaoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes", "{{execucaoId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trabalho do mecânico",
+      "item": [
+        {
+          "name": "POST /execucoes/{id}/inicio",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mecanico\": \"{{mecanico}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/execucoes/{{execucaoId}}/inicio",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes", "{{execucaoId}}", "inicio"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reparo iniciado', () => pm.response.to.have.status(200));",
+                  "pm.test('status EM_ANDAMENTO', () => pm.expect(pm.response.json().status).to.eql('EM_ANDAMENTO'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /execucoes/{id}/finalizacao",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"observacoes\": \"Revisao concluida, filtro trocado\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/execucoes/{{execucaoId}}/finalizacao",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes", "{{execucaoId}}", "finalizacao"]
+            },
+            "description": "Publica EXECUCAO_FINALIZADA. Em seguida, no OS Service, a ordem de serviço aparece como FINALIZADA sem nenhuma chamada HTTP entre os dois."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reparo finalizado', () => pm.response.to.have.status(200));",
+                  "const corpo = pm.response.json();",
+                  "pm.test('status FINALIZADA', () => pm.expect(corpo.status).to.eql('FINALIZADA'));",
+                  "console.log('estimado (min):', corpo.tempoEstimadoMinutos, '| real (ms):', corpo.duracaoMs);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /execucoes/{id}/finalizacao (409 fora de ordem)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/execucoes/{{execucaoId}}/finalizacao",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes", "{{execucaoId}}", "finalizacao"]
+            },
+            "description": "Finalizar o que não foi iniciado (ou já foi finalizado) devolve 409: a máquina de estados da execução recusa a transição."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('transição recusada', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Evidência do rollback",
+      "item": [
+        {
+          "name": "GET /execucoes?status=CANCELADA",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/execucoes?status=CANCELADA",
+              "host": ["{{baseUrl}}"],
+              "path": ["execucoes"],
+              "query": [{ "key": "status", "value": "CANCELADA" }]
+            },
+            "description": "Execuções canceladas pela compensação CANCELAR_EXECUCAO, com o motivo registrado. O histórico não é apagado: a compensação é um fato novo, não um \"desfazer\"."
+          }
+        },
+        {
+          "name": "GET /execucoes/fila (vaga devolvida)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/execucoes/fila", "host": ["{{baseUrl}}"], "path": ["execucoes", "fila"] },
+            "description": "Depois da compensação, a vaga volta a estar disponível: a execução cancelada não conta mais na capacidade da oficina."
+          }
+        }
+      ]
+    }
+  ]
+}
