@@ -6,3 +6,6 @@ coverage/
 newrelic_agent.log
 tests/bdd/report.html
 .DS_Store
+
+# Ajustes locais de maquina (portas, New Relic) — nao versionados.
+docker-compose.override.yml
