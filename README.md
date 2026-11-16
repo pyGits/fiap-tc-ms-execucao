@@ -243,13 +243,29 @@ Pipeline **independente** deste repositório (`.github/workflows/`):
 build, `test:coverage` com gate de 80%, `test:bdd`, renderização dos overlays
 do Kustomize, build da imagem e job de **SonarQube com Quality Gate**.
 
-**`deploy.yml`** — merge em `develop` → homologação (`fiap-hml`); merge em
-`main` → produção (`fiap-prd`). A imagem vai para o **Amazon ECR** com a tag do
-SHA, o Secret é montado a partir do **AWS Systems Manager Parameter Store** e o
-job aguarda o `rollout status` no **EKS**.
+**`deploy.yml`** — deploy automatizado em Kubernetes: merge em `develop` →
+homologação (`fiap-hml`); merge em `main` → produção (`fiap-prd`). O cluster é
+criado pelo próprio pipeline com **kind** (Kubernetes in Docker) no runner e
+destruído no fim do job — a decisão, e o que ela *não* prova, estão no
+[ADR-019](https://github.com/pyGits/fiap-tc-ms-os/blob/main/docs/adr/ADR-019-deploy-em-cluster-efemero-no-ci.md)
+do OS Service. A sequência:
+
+1. build + `test:coverage` + `test:bdd` — **nada é implantado sem o gate**;
+2. imagem Docker construída e carregada no cluster (`kind load docker-image`);
+3. dependências efêmeras do serviço (`k8s/ci/`): MongoDB e RabbitMQ;
+4. `Secret` do serviço, **só** com as credenciais do banco dele;
+5. overlay do Kustomize renderizado e aplicado;
+6. `kubectl rollout status` — só retorna depois do *readiness probe*;
+7. *smoke test* em `/health` dentro do cluster, via `port-forward`.
+
+**`deploy-eks.yml`** — o caminho para **Amazon EKS** da Fase 3 (imagem no
+**Amazon ECR**, Secret a partir do **AWS Systems Manager Parameter Store**),
+preservado e com disparo **apenas manual**: a Fase 4 não exige nuvem e não há
+cluster gerenciado no ar.
 
 ```
 k8s/base/            configmap, deployment, service, hpa
+k8s/ci/              MongoDB e RabbitMQ efêmeros, usados SÓ pelo cluster do pipeline
 k8s/overlays/hml/    namespace fiap-hml, 1 réplica, LOG_LEVEL=debug
 k8s/overlays/prd/    namespace fiap-prd, 2 réplicas, HPA 2–10
 ```
